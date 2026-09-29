@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vista previa · McLov3 CRM</title>
+</head>
+<body>
+  <p style="font-family:sans-serif;padding:16px">Cargando vista previa…</p>
+  <script>
+    /* Arma la misma página que sirve Apps Script (index + estilos + app),
+       pero con servidor-falso.js en lugar de Google. Solo para pruebas locales. */
+    Promise.all(['../index.html', '../estilos.html', '../app.html'].map(function (f) {
+      return fetch(f, { cache: 'no-store' }).then(function (r) { return r.text(); });
+    })).then(function (t) {
+      var html = t[0]
+        .replace('<base target="_top">', '')
+        .replace(/<\?!=\s*include\('estilos'\);?\s*\?>/, function () { return t[1]; })
+        .replace(/<\?!=\s*include\('app'\);?\s*\?>/, function () { return '<script src="servidor-falso.js"><\/script>' + t[2]; });
+      document.open();
+      document.write(html);
+      document.close();
+    });
+  </script>
+</body>
+</html>

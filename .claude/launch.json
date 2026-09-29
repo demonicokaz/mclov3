@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "landing",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["servidor-local.js", "landing", "8080"],
+      "port": 8080
+    },
+    {
+      "name": "crm-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["servidor-local.js", "crm", "8081"],
+      "port": 8081
+    }
+  ]
+}

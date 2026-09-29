@@ -1,0 +1,140 @@
+/* =====================================================================
+   TEMAS DE TEMPORADA
+   Cada tema solo cambia colores y adornos. Las fechas están en js/config.js.
+   Para crear uno nuevo: copia un bloque, cámbiale el nombre y los colores,
+   y agrégalo a TEMPORADAS en config.js.
+   ===================================================================== */
+
+/* 💘 San Valentín */
+html[data-tema="san-valentin"] {
+  --fondo: #FFF3F5;
+  --superficie: #FFFCFD;
+  --titulo: #8A1C47;
+  --primario: #C2185B;
+  --primario-sombra: #880E4F;
+  --brocha-1: #F9CFDC;
+  --brocha-2: #FFE0E8;
+  --icono-bg: #FBD9E4;
+  --icono-bg-2: #FFE9C7;
+  --borde: #F2B5CB;
+  --chip-bg: #FDE4EC;
+  --puntos: rgba(194, 24, 91, .07);
+  --aviso-bg: #C2185B;
+  --pie-bg: #8A1C47;
+  --tarjeta-fid-bg: #FDE4EC;
+  --tira: repeating-linear-gradient(90deg, #E91E63 0 10px, #F8BBD0 10px 20px);
+  --tira-alto: 6px;
+  --deco: "💘";
+}
+
+/* 🌷 Día de las Madres */
+html[data-tema="dia-madres"] {
+  --fondo: #FFF7F3;
+  --titulo: #7A2E4F;
+  --primario: #B83D74;
+  --primario-sombra: #7F2550;
+  --brocha-1: #FAD6E3;
+  --brocha-2: #E4F2D6;
+  --icono-bg: #FAD6E3;
+  --icono-bg-2: #E4F2D6;
+  --borde: #EDC2D3;
+  --chip-bg: #FCE6EE;
+  --aviso-bg: #7A2E4F;
+  --pie-bg: #7A2E4F;
+  --tira: repeating-linear-gradient(90deg, #F4A7C3 0 12px, #B7DB9E 12px 24px);
+  --tira-alto: 6px;
+  --deco: "🌷";
+}
+
+/* ✏️ Regreso a clases */
+html[data-tema="regreso-clases"] {
+  --fondo: #F4F8FF;
+  --superficie: #FFFFFF;
+  --titulo: #1F3A68;
+  --primario: #2F6FB0;
+  --primario-sombra: #1F4E80;
+  --brocha-1: #D6E6FF;
+  --brocha-2: #FFF0B3;
+  --icono-bg: #D6E6FF;
+  --icono-bg-2: #FFE9A8;
+  --borde: #B9CCEB;
+  --chip-bg: #E6EFFD;
+  --puntos: rgba(31, 58, 104, .07);
+  --aviso-bg: #1F3A68;
+  --pie-bg: #1F3A68;
+  --tarjeta-fid-bg: #E6EFFD;
+  --tira: repeating-linear-gradient(90deg, #F2C12E 0 14px, #2F6FB0 14px 28px);
+  --tira-alto: 6px;
+  --deco: "✏️";
+}
+
+/* 🇲🇽 Fiestas patrias */
+html[data-tema="patrias"] {
+  --fondo: #FBF8F1;
+  --titulo: #0B5D3B;
+  --primario: #B3261E;
+  --primario-sombra: #7F1A15;
+  --brocha-1: #D3EBDD;
+  --brocha-2: #F8D7D3;
+  --icono-bg: #D3EBDD;
+  --icono-bg-2: #F8D7D3;
+  --borde: #BFD9C9;
+  --chip-bg: #E8F3EC;
+  --puntos: rgba(11, 93, 59, .07);
+  --aviso-bg: #0B5D3B;
+  --pie-bg: #0B5D3B;
+  --tarjeta-fid-bg: #E8F3EC;
+  --tira: linear-gradient(90deg, #0B6B42 0 33.3%, #FFFFFF 33.3% 66.6%, #C62828 66.6%);
+  --tira-alto: 8px;
+  --deco: "🇲🇽";
+}
+
+/* 🎃 Halloween y Día de Muertos */
+html[data-tema="muertos"] {
+  --fondo: #FFF6EA;
+  --superficie: #FFFCF7;
+  --titulo: #4A1D5E;
+  --primario: #B94700;
+  --primario-sombra: #7A2F00;
+  --brocha-1: #FFD89A;
+  --brocha-2: #E6CCF2;
+  --icono-bg: #FFE0AE;
+  --icono-bg-2: #E6CCF2;
+  --borde: #F0C48A;
+  --chip-bg: #FFEBCC;
+  --puntos: rgba(185, 71, 0, .08);
+  --aviso-bg: #2D1238;
+  --aviso-texto: #FFD89A;
+  --pie-bg: #2D1238;
+  --tarjeta-fid-bg: #FFEBCC;
+  /* papel picado */
+  --tira:
+    linear-gradient(135deg, #FFFCF7 25%, transparent 25%) -8px 0 / 16px 16px,
+    linear-gradient(225deg, #FFFCF7 25%, transparent 25%) -8px 0 / 16px 16px,
+    repeating-linear-gradient(90deg, #E8741C 0 48px, #8E3FB5 48px 96px, #E0457B 96px 144px, #F2B233 144px 192px);
+  --tira-alto: 14px;
+  --deco: "💀";
+}
+
+/* 🎄 Navidad */
+html[data-tema="navidad"] {
+  --fondo: #FBF7F2;
+  --titulo: #1E4D2B;
+  --primario: #B3261E;
+  --primario-sombra: #7F1A15;
+  --brocha-1: #F4D2CF;
+  --brocha-2: #D4E8D4;
+  --icono-bg: #F4D2CF;
+  --icono-bg-2: #D4E8D4;
+  --resalte: #F2D27A;
+  --borde: #D9C7A6;
+  --chip-bg: #EEF5EC;
+  --puntos: rgba(30, 77, 43, .07);
+  --aviso-bg: #1E4D2B;
+  --aviso-texto: #FCEFC7;
+  --pie-bg: #1E4D2B;
+  --tarjeta-fid-bg: #EEF5EC;
+  --tira: repeating-linear-gradient(-45deg, #B3261E 0 10px, #FFFFFF 10px 20px, #1E4D2B 20px 30px, #FFFFFF 30px 40px);
+  --tira-alto: 8px;
+  --deco: "🎄";
+}

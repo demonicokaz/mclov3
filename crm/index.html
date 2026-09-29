@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <?!= include('estilos'); ?>
+</head>
+<body>
+  <header class="barra">
+    <button class="barra-btn" id="atras" data-accion="atras" aria-label="Regresar" hidden>‹</button>
+    <h1 id="titulo">McLov3</h1>
+    <button class="barra-btn" data-accion="recargar" aria-label="Actualizar datos">⟳</button>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Secciones">
+    <button data-ir="inicio" data-tab="inicio"><span class="tab-ico">🏠</span>Inicio</button>
+    <button data-ir="pedidos" data-tab="pedidos"><span class="tab-ico">🧵</span>Pedidos</button>
+    <button data-ir="clientes" data-tab="clientes"><span class="tab-ico">👩</span>Clientes</button>
+    <button data-ir="cobros" data-tab="cobros"><span class="tab-ico">💰</span>Cobros</button>
+    <button data-ir="solicitudes" data-tab="solicitudes"><span class="tab-ico">📨</span>Solicitudes<b class="insignia" id="insignia" hidden></b></button>
+  </nav>
+
+  <main id="vista"><div class="cargando"><span class="giro"></span>Cargando…</div></main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <?!= include('app'); ?>
+</body>
+</html>

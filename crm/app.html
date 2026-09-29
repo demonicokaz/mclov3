@@ -1,0 +1,942 @@
+<script>
+/* McLov3 CRM · app de la tablet.
+   JavaScript sencillo (sin librerías) para que funcione en tablets y celulares viejos.
+   Las funciones del servidor están en Api.gs y se llaman con servidor('nombre', args…). */
+(function () {
+  'use strict';
+
+  /* ======================= Estado ======================= */
+  var S = { clientes: [], pedidos: [], pagos: [], solicitudes: [], config: {}, hoy: '' };
+  var IDX = {};
+  var UI = {
+    ruta: 'inicio', cargado: false, ultimaCarga: 0, form: null, limite: 50,
+    filtroPedidos: 'activos', qPedidos: '', filtroClientes: 'activos', qClientes: '',
+    filtroSol: 'Nueva', metodoAbono: 'Efectivo'
+  };
+  var ESTADOS = ['Recibido', 'En proceso', 'Listo', 'Entregado'];
+  var METODOS = ['Efectivo', 'Transferencia', 'Tarjeta'];
+  var MEDIDAS_SUGERIDAS = ['Busto', 'Cintura', 'Cadera', 'Hombros', 'Espalda', 'Largo de manga', 'Contorno de brazo',
+    'Largo de blusa', 'Largo de falda', 'Largo de vestido', 'Largo de pantalón', 'Tiro', 'Cuello'];
+  var vista = document.getElementById('vista');
+
+  /* ======================= Utilidades ======================= */
+  function $(id) { return document.getElementById(id); }
+  function esc(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function num(v) { var n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; }
+  function redondo(n) { return Math.round(n * 100) / 100; }
+  var formatoDinero = new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN', minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  function dinero(n) { return formatoDinero.format(redondo(n || 0)); }
+  function si(v) { return v === true || v === 'TRUE' || v === 'true'; }
+  function copia(o) { return JSON.parse(JSON.stringify(o)); }
+  function normal(t) { return String(t == null ? '' : t).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  function primerNombre(n) { return String(n || '').trim().split(/\s+/)[0]; }
+  function ancho() { return window.innerWidth >= 900; }
+  function folioTxt(f) { return '#' + f; }
+  function upsert(lista, obj, clave) {
+    for (var i = 0; i < lista.length; i++) {
+      if (String(lista[i][clave]) === String(obj[clave])) { Object.assign(lista[i], obj); return lista[i]; }
+    }
+    lista.push(obj);
+    return obj;
+  }
+
+  /* Fechas: se manejan como texto "2026-10-05" para evitar líos de zona horaria */
+  var DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+  var DIAS_L = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  var MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  var MESES_L = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function pad(n) { return ('0' + n).slice(-2); }
+  function aFecha(s) {
+    var p = String(s || '').slice(0, 10).split('-');
+    return p.length === 3 ? new Date(+p[0], +p[1] - 1, +p[2]) : null;
+  }
+  function iso(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function sumarDias(s, n) { var d = aFecha(s); d.setDate(d.getDate() + n); return iso(d); }
+  function diasEntre(a, b) { return Math.round((aFecha(b) - aFecha(a)) / 864e5); }
+  function fechaCorta(s) { var d = aFecha(s); return d ? DIAS[d.getDay()] + ' ' + d.getDate() + ' ' + MESES[d.getMonth()] : '—'; }
+  function fechaLarga(s) { var d = aFecha(s); return d ? DIAS_L[d.getDay()] + ' ' + d.getDate() + ' de ' + MESES_L[d.getMonth()] : ''; }
+  function etiquetaEntrega(f) {
+    var d = diasEntre(S.hoy, f);
+    if (d === 0) return 'Hoy';
+    if (d === 1) return 'Mañana';
+    if (d < 0) return 'Atrasado ' + (-d) + (d === -1 ? ' día' : ' días');
+    return fechaCorta(f);
+  }
+
+  /* WhatsApp */
+  function telWa(t) { var d = String(t || '').replace(/\D/g, ''); return d.length === 10 ? '52' + d : d; }
+  function linkWa(tel, texto) { return 'https://wa.me/' + telWa(tel) + (texto ? '?text=' + encodeURIComponent(texto) : ''); }
+  function plantilla(clave, datos) {
+    var base = { negocio: S.config.negocio || 'McLov3', firma: S.config.firma || '' };
+    Object.keys(datos || {}).forEach(function (k) { base[k] = datos[k]; });
+    return String(S.config[clave] || '').replace(/\{(\w+)\}/g, function (m, k) { return base[k] != null ? base[k] : ''; });
+  }
+  function botonWa(tel, texto, etiqueta, extra) {
+    return '<a class="btn btn-wa" href="' + esc(linkWa(tel, texto)) + '" target="_blank" rel="noopener" ' + (extra || '') + '>' + etiqueta + '</a>';
+  }
+
+  /* Pedazos de HTML */
+  function vacio(t) { return '<p class="vacio">' + esc(t) + '</p>'; }
+  function seccion(titulo, html) { return '<h2 class="seccion-titulo">' + esc(titulo) + '</h2>' + html; }
+  function campo(etiqueta, control) { return '<label class="campo"><span>' + esc(etiqueta) + '</span>' + control + '</label>'; }
+  function dato(k, v) { return (v === '' || v == null) ? '' : '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>'; }
+  function claseEstado(e) { return 'e-' + normal(e).replace(/\s+/g, '-'); }
+  function badge(e) { return '<span class="estado ' + claseEstado(e) + '">' + esc(e) + '</span>'; }
+  function chip(texto, activo, grupo) {
+    return '<button type="button" class="chip' + (activo ? ' activo' : '') + '" data-accion="elegir" data-grupo="' + grupo +
+      '" data-valor="' + esc(texto) + '">' + esc(texto) + '</button>';
+  }
+
+  /* ======================= Datos derivados ======================= */
+  function reindexar() {
+    IDX = { cliente: {}, pedido: {}, pagos: {}, pedidosDe: {} };
+    S.clientes.forEach(function (c) { IDX.cliente[c.id] = c; });
+    S.pedidos.forEach(function (p) {
+      IDX.pedido[p.folio] = p;
+      (IDX.pedidosDe[p.cliente_id] = IDX.pedidosDe[p.cliente_id] || []).push(p);
+    });
+    S.pagos.forEach(function (g) { (IDX.pagos[g.folio] = IDX.pagos[g.folio] || []).push(g); });
+    var nuevas = S.solicitudes.filter(function (s) { return s.estado === 'Nueva'; }).length;
+    $('insignia').textContent = nuevas;
+    $('insignia').hidden = !nuevas;
+  }
+  function cliente(id) { return IDX.cliente[id] || { id: id, nombre: '(sin cliente)', telefono: '' }; }
+  function nombreDe(p) { return cliente(p.cliente_id).nombre; }
+  function pagosDe(folio) { return IDX.pagos[folio] || []; }
+  function pagado(folio) { return redondo(pagosDe(folio).reduce(function (s, g) { return s + num(g.monto); }, 0)); }
+  function saldo(p) { return redondo(num(p.total) - pagado(p.folio)); }
+  function pedidosDe(id) { return (IDX.pedidosDe[id] || []).filter(function (p) { return !si(p.archivado); }); }
+  function activo(p) { return !si(p.archivado) && p.estado !== 'Entregado'; }
+  function fechaEnt(p) { return p.fecha_entrega ? String(p.fecha_entrega).slice(0, 10) : ''; }
+  function atrasado(p) { return activo(p) && fechaEnt(p) !== '' && fechaEnt(p) < S.hoy; }
+  function saldoCliente(id) { return pedidosDe(id).reduce(function (s, p) { return s + Math.max(0, saldo(p)); }, 0); }
+  function tipos() { return String(S.config.tipos || '').split(',').map(function (t) { return t.trim(); }).filter(Boolean); }
+  function porcentajePrimera() { return num(S.config.descuento_primera) || 0; }
+
+  /** Tarjeta de fidelidad: cada pedido entregado (no gratis) suma un sello; el regalo gasta 9. */
+  function sellosDe(id) {
+    var meta = num(S.config.sellos_para_regalo) || 9;
+    var porPrenda = normal(S.config.sellos_por) === 'prenda';
+    var ganados = 0, gratis = 0;
+    pedidosDe(id).forEach(function (p) {
+      if (si(p.es_gratis)) gratis++;
+      else if (p.estado === 'Entregado') ganados += porPrenda ? (num(p.prendas) || 1) : 1;
+    });
+    return { sellos: Math.max(0, ganados - meta * gratis), meta: meta, gratis: gratis };
+  }
+
+  function porEntrega(a, b) {
+    var fa = fechaEnt(a) || '9999', fb = fechaEnt(b) || '9999';
+    return fa < fb ? -1 : fa > fb ? 1 : a.folio - b.folio;
+  }
+  function porFolioDesc(a, b) { return b.folio - a.folio; }
+
+  function datosPedidoWa(p) {
+    return {
+      nombre: primerNombre(nombreDe(p)), folio: p.folio,
+      trabajo: [p.tipo, p.descripcion].filter(Boolean).join(' - '), prendas: p.prendas,
+      total: dinero(p.total), pagado: dinero(pagado(p.folio)), saldo: dinero(Math.max(0, saldo(p))),
+      saldo_txt: saldo(p) > 0 ? 'Saldo pendiente: ' + dinero(saldo(p)) + '.' : 'Ya está pagado ✓.',
+      entrega: fechaEnt(p) ? fechaLarga(fechaEnt(p)) : 'por confirmar'
+    };
+  }
+
+  /* ======================= Servidor ======================= */
+  function servidor(fn) {
+    var args = [].slice.call(arguments, 1);
+    return new Promise(function (ok, falla) {
+      var r = google.script.run.withSuccessHandler(ok).withFailureHandler(falla);
+      r[fn].apply(r, args);
+    });
+  }
+  function mensajeError(e) { return String((e && e.message) || e || 'Error').replace(/^Exception:\s*/, ''); }
+  function errorServidor(e) {
+    var m = mensajeError(e);
+    if (/network|red|fetch|autoriz|permission|login|sesi/i.test(m)) m += ' · Revisa tu internet o recarga la página.';
+    aviso('No se pudo guardar: ' + m, 'error');
+  }
+  var tAviso;
+  function aviso(texto, tipo) {
+    var t = $('toast');
+    t.textContent = texto;
+    t.className = 'toast' + (tipo ? ' ' + tipo : '');
+    t.hidden = false;
+    clearTimeout(tAviso);
+    tAviso = setTimeout(function () { t.hidden = true; }, tipo === 'error' ? 6000 : 2500);
+  }
+  function ocupado(btn, encender) {
+    if (!btn) return;
+    if (encender) { btn.setAttribute('data-texto', btn.textContent); btn.textContent = 'Guardando…'; btn.disabled = true; }
+    else { btn.textContent = btn.getAttribute('data-texto') || btn.textContent; btn.disabled = false; }
+  }
+
+  function cargar(silencioso) {
+    if (!silencioso || !UI.cargado) vista.innerHTML = '<div class="cargando"><span class="giro"></span>Cargando…</div>';
+    return servidor('cargarTodo').then(function (d) {
+      S = d;
+      UI.cargado = true;
+      UI.ultimaCarga = Date.now();
+      reindexar();
+      if (!UI.form) mostrar(UI.ruta, silencioso);
+      if (silencioso) aviso('Datos actualizados ✓', 'ok');
+    }).catch(function (e) {
+      if (UI.cargado) return aviso('No se pudo actualizar: ' + mensajeError(e), 'error');
+      vista.innerHTML = '<div class="caja vacio"><p>😔 No se pudieron cargar los datos.</p><p class="ayuda">' + esc(mensajeError(e)) +
+        '</p><button class="btn" data-accion="recargar">Reintentar</button></div>';
+    });
+  }
+
+  /* ======================= Navegación ======================= */
+  var TITULOS = {
+    inicio: 'McLov3', pedidos: 'Pedidos', pedido: 'Pedido', 'nuevo-pedido': 'Nuevo pedido', 'editar-pedido': 'Editar pedido',
+    nota: 'Nota de pedido', clientes: 'Clientes', cliente: 'Cliente', 'nuevo-cliente': 'Nuevo cliente',
+    'editar-cliente': 'Editar cliente', cobros: 'Cobrando ando 📣', solicitudes: 'Solicitudes de la página'
+  };
+  var PESTANA = { pedido: 'pedidos', 'nuevo-pedido': 'pedidos', 'editar-pedido': 'pedidos', nota: 'pedidos', cliente: 'clientes', 'nuevo-cliente': 'clientes', 'editar-cliente': 'clientes' };
+  var RAICES = ['inicio', 'pedidos', 'clientes', 'cobros', 'solicitudes'];
+
+  function ir(ruta, reemplazar) {
+    try {
+      if (reemplazar) google.script.history.replace({ ruta: ruta }, {}, ruta);
+      else google.script.history.push({ ruta: ruta }, {}, ruta);
+    } catch (e) { /* sin historial disponible */ }
+    mostrar(ruta);
+  }
+
+  function padreDe(ruta) {
+    var p = ruta.split('/'), v = p[0], a = p[1];
+    if (v === 'editar-pedido' || v === 'nota') return 'pedido/' + a;
+    if (v === 'editar-cliente') return 'cliente/' + a;
+    if (v === 'nuevo-pedido') return a ? 'cliente/' + a : 'pedidos';
+    if (v === 'pedido') return 'pedidos';
+    if (v === 'cliente' || v === 'nuevo-cliente') return 'clientes';
+    return 'inicio';
+  }
+
+  function mostrar(ruta, mantenerScroll) {
+    UI.ruta = ruta || 'inicio';
+    if (!UI.cargado) return;
+    var p = UI.ruta.split('/'), v = p[0], a = decodeURIComponent(p[1] || '');
+    if (!VISTAS[v]) { v = 'inicio'; UI.ruta = 'inicio'; }
+    $('titulo').textContent = TITULOS[v] || 'McLov3';
+    $('atras').hidden = RAICES.indexOf(v) >= 0;
+    var tab = PESTANA[v] || v;
+    [].forEach.call(document.querySelectorAll('#tabs button'), function (b) {
+      b.className = b.getAttribute('data-tab') === tab ? 'activo' : '';
+    });
+    UI.form = null;
+    var y = window.pageYOffset;
+    var html;
+    if (ancho() && (v === 'pedidos' || v === 'pedido')) {
+      html = dividido(VISTAS.pedidos(), v === 'pedido' ? VISTAS.pedido(a) : vacio('👈 Elige un pedido para ver su detalle'));
+    } else if (ancho() && (v === 'clientes' || v === 'cliente')) {
+      html = dividido(VISTAS.clientes(), v === 'cliente' ? VISTAS.cliente(a) : vacio('👈 Elige un cliente para ver su detalle'));
+    } else {
+      html = VISTAS[v](a);
+    }
+    vista.innerHTML = html;
+    if (MONTAR[v]) MONTAR[v](a);
+    window.scrollTo(0, mantenerScroll ? y : 0);
+  }
+
+  function dividido(izq, der) {
+    return '<div class="dividido"><div class="lado">' + izq + '</div><div class="detalle">' + der + '</div></div>';
+  }
+
+  /* ======================= Vistas ======================= */
+  var VISTAS = {};
+
+  VISTAS.inicio = function () {
+    var act = S.pedidos.filter(activo);
+    var paraHoy = act.filter(function (p) { return fechaEnt(p) === S.hoy; });
+    var atras = act.filter(atrasado).sort(porEntrega);
+    var listos = act.filter(function (p) { return p.estado === 'Listo'; });
+    var porCobrar = S.pedidos.reduce(function (s, p) { return si(p.archivado) ? s : s + Math.max(0, saldo(p)); }, 0);
+    var nuevas = S.solicitudes.filter(function (s) { return s.estado === 'Nueva'; }).length;
+    var proximos = act.filter(function (p) {
+      var f = fechaEnt(p);
+      return f && f >= S.hoy && diasEntre(S.hoy, f) <= 7;
+    }).sort(porEntrega);
+
+    function tarjeta(titulo, valor, destino, clase) {
+      var attr = destino.indexOf('filtro:') === 0
+        ? 'data-accion="filtrar" data-filtro="' + destino.slice(7) + '"'
+        : 'data-ir="' + destino + '"';
+      return '<button class="tarjeta ' + (clase || '') + '" ' + attr + '><b>' + esc(valor) + '</b><span>' + esc(titulo) + '</span></button>';
+    }
+
+    return '<p class="saludo">¡Hola' + (S.config.firma ? ', ' + esc(S.config.firma) : '') + '! ♥<br><span>Hoy es ' + fechaLarga(S.hoy) + '</span></p>' +
+      '<button class="btn btn-grande" data-ir="nuevo-pedido">＋ Nuevo pedido</button>' +
+      '<div class="tarjetas">' +
+        tarjeta('Entregas de hoy', paraHoy.length, 'filtro:hoy') +
+        tarjeta('Atrasados', atras.length, 'filtro:atrasados', atras.length ? 'alerta' : '') +
+        tarjeta('Listos para entregar', listos.length, 'filtro:Listo') +
+        tarjeta('Por cobrar', dinero(porCobrar), 'cobros') +
+        tarjeta('Solicitudes nuevas', nuevas, 'solicitudes', nuevas ? 'nueva' : '') +
+        tarjeta('Pedidos activos', act.length, 'filtro:activos') +
+      '</div>' +
+      (atras.length ? seccion('⚠️ Atrasados', atras.map(itemPedido).join('')) : '') +
+      seccion('Próximas entregas (7 días)', proximos.length ? proximos.map(itemPedido).join('') : vacio('No hay entregas en los próximos 7 días'));
+  };
+
+  /* ---------- Pedidos ---------- */
+  var FILTROS = [['activos', 'Activos'], ['hoy', 'Para hoy'], ['atrasados', 'Atrasados'], ['Recibido', 'Recibidos'],
+    ['En proceso', 'En proceso'], ['Listo', 'Listos'], ['Entregado', 'Entregados'], ['todos', 'Todos'], ['archivados', 'Archivados']];
+
+  function filtrarPedidos(f) {
+    return S.pedidos.filter(function (p) {
+      if (f === 'archivados') return si(p.archivado);
+      if (si(p.archivado)) return false;
+      if (f === 'todos') return true;
+      if (f === 'activos') return activo(p);
+      if (f === 'hoy') return activo(p) && fechaEnt(p) === S.hoy;
+      if (f === 'atrasados') return atrasado(p);
+      return p.estado === f;
+    });
+  }
+
+  function listaPedidosHtml() {
+    var q = normal(UI.qPedidos);
+    var lista = filtrarPedidos(UI.filtroPedidos).filter(function (p) {
+      return !q || normal(nombreDe(p) + ' #' + p.folio + ' ' + p.tipo + ' ' + p.descripcion + ' ' + cliente(p.cliente_id).telefono).indexOf(q) >= 0;
+    });
+    lista.sort(['Entregado', 'todos', 'archivados'].indexOf(UI.filtroPedidos) >= 0 ? porFolioDesc : porEntrega);
+    if (!lista.length) return vacio(q ? 'Nada coincide con "' + UI.qPedidos + '"' : 'No hay pedidos aquí');
+    var html = lista.slice(0, UI.limite).map(itemPedido).join('');
+    if (lista.length > UI.limite) html += '<button class="btn btn-sec btn-grande" data-accion="mas" data-lista="pedidos">Ver más (' + (lista.length - UI.limite) + ')</button>';
+    return html;
+  }
+
+  function itemPedido(p) {
+    var s = saldo(p), f = fechaEnt(p);
+    var entrega = p.estado === 'Entregado' ? 'Entregado' : (f ? etiquetaEntrega(f) : 'Sin fecha');
+    var cls = atrasado(p) ? ' atrasado' : (activo(p) && f === S.hoy ? ' hoy' : '');
+    var pie = s > 0 ? '<span class="debe">Debe ' + dinero(s) + '</span>'
+      : si(p.es_gratis) ? '<span class="pagado">🎁 Gratis</span>'
+      : num(p.total) > 0 ? '<span class="pagado">Pagado ✓</span>' : '';
+    return '<button class="item' + (UI.ruta === 'pedido/' + p.folio ? ' seleccionado' : '') + '" data-ir="pedido/' + p.folio + '">' +
+      '<span class="item-fila"><b>' + folioTxt(p.folio) + ' · ' + esc(nombreDe(p)) + '</b>' + badge(p.estado) + '</span>' +
+      '<span class="item-sub">' + esc([p.tipo, p.descripcion].filter(Boolean).join(' · ') || 'Sin descripción') + '</span>' +
+      '<span class="item-fila item-pie"><span class="entrega' + cls + '">📅 ' + esc(entrega) + '</span>' + pie + '</span></button>';
+  }
+
+  VISTAS.pedidos = function () {
+    return '<div class="chips">' + FILTROS.map(function (f) {
+        return '<button class="chip' + (UI.filtroPedidos === f[0] ? ' activo' : '') + '" data-accion="filtrar" data-filtro="' + f[0] + '">' +
+          f[1] + ' <small>' + filtrarPedidos(f[0]).length + '</small></button>';
+      }).join('') + '</div>' +
+      '<input class="buscar" type="search" placeholder="🔍 Buscar nombre, folio o trabajo…" data-entrada="buscarPedidos" value="' + esc(UI.qPedidos) + '">' +
+      '<div id="lista">' + listaPedidosHtml() + '</div>' +
+      '<button class="fab" data-ir="nuevo-pedido" aria-label="Nuevo pedido">＋</button>';
+  };
+
+  VISTAS.pedido = function (folio) {
+    var p = IDX.pedido[folio];
+    if (!p) return vacio('No encontré el pedido ' + folioTxt(folio));
+    var c = cliente(p.cliente_id), s = saldo(p), pagos = pagosDe(p.folio), wa = datosPedidoWa(p);
+    var h = '<div class="caja">' +
+      '<div class="item-fila"><h2 class="folio">' + folioTxt(p.folio) + '</h2><span>' + badge(p.estado) +
+        (si(p.archivado) ? ' ' + badge('Archivado') : '') + '</span></div>' +
+      '<button class="enlace-cliente" data-ir="cliente/' + esc(c.id) + '">👤 ' + esc(c.nombre) + (c.telefono ? ' · ' + esc(c.telefono) : '') + ' ›</button>' +
+      '<dl class="datos">' + dato('Trabajo', p.tipo) + dato('Descripción', p.descripcion) + dato('Prendas', p.prendas) +
+        dato('Recibido', fechaCorta(p.fecha_recibido)) +
+        dato('Entrega', fechaEnt(p) ? fechaLarga(fechaEnt(p)) + (activo(p) && diasEntre(S.hoy, fechaEnt(p)) <= 1 ? ' (' + etiquetaEntrega(fechaEnt(p)) + ')' : '') : 'Sin fecha') +
+        dato('Notas', p.notas) + '</dl></div>';
+
+    h += '<div class="caja"><h3>Estado</h3><div class="pasos-estado">' + ESTADOS.map(function (e, i) {
+      var actual = ESTADOS.indexOf(p.estado);
+      return '<button class="paso-estado' + (i === actual ? ' actual' : i < actual ? ' hecho' : '') + '" data-accion="estado" data-folio="' + p.folio +
+        '" data-estado="' + e + '">' + (i + 1) + '. ' + e + '</button>';
+    }).join('') + '</div>' +
+      (p.estado === 'Listo' && c.telefono ? botonWa(c.telefono, plantilla('wa_listo', wa), '📲 Avisar que ya está listo') : '') + '</div>';
+
+    h += '<div class="caja"><h3>Cuenta</h3><table class="cuenta">' +
+      '<tr><td>Precio</td><td>' + dinero(p.precio) + '</td></tr>' +
+      (num(p.descuento) > 0 ? '<tr><td>' + (si(p.es_gratis) ? '🎁 Regalo de la tarjeta' : 'Descuento') + '</td><td>− ' + dinero(p.descuento) + '</td></tr>' : '') +
+      '<tr class="total"><td>Total</td><td>' + dinero(p.total) + '</td></tr>' +
+      '<tr><td>Pagado</td><td>' + dinero(pagado(p.folio)) + '</td></tr>' +
+      '<tr class="saldo ' + (s > 0 ? 'debe' : 'ok') + '"><td>' + (s > 0 ? 'Saldo pendiente' : 'Saldo') + '</td><td>' + dinero(Math.max(0, s)) + '</td></tr>' +
+      (s < 0 ? '<tr><td>Pagó de más</td><td>' + dinero(-s) + '</td></tr>' : '') + '</table>';
+    if (pagos.length) {
+      h += '<h4>Pagos</h4><ul class="pagos">' + pagos.map(function (g) {
+        return '<li><span>' + fechaCorta(g.fecha) + ' · ' + esc(g.metodo) + (g.nota ? ' · ' + esc(g.nota) : '') + '</span><b>' + dinero(g.monto) +
+          '</b><button class="mini" data-accion="anularPago" data-id="' + esc(g.id) + '" aria-label="Anular pago">✕</button></li>';
+      }).join('') + '</ul>';
+    }
+    if (s > 0) {
+      h += '<div class="abono"><h4>Registrar abono</h4><div class="fila-campos">' +
+        '<input id="abono-monto" type="number" inputmode="decimal" min="0" step="any" placeholder="Monto $">' +
+        '<button class="btn btn-sec" data-accion="liquidar" data-monto="' + s + '">Todo: ' + dinero(s) + '</button></div>' +
+        '<div class="chips">' + METODOS.map(function (m) { return chip(m, UI.metodoAbono === m, 'metodoAbono'); }).join('') + '</div>' +
+        '<button class="btn btn-grande" data-accion="abonar" data-folio="' + p.folio + '">💵 Registrar abono</button></div>';
+    }
+    h += '</div>';
+
+    h += '<div class="acciones">' +
+      '<button class="btn btn-sec" data-ir="editar-pedido/' + p.folio + '">✏️ Editar</button>' +
+      '<button class="btn btn-sec" data-ir="nota/' + p.folio + '">🧾 Ver nota</button>' +
+      (c.telefono ? botonWa(c.telefono, plantilla('wa_nota', wa), '📲 Enviar nota') : '') +
+      (s > 0 && c.telefono ? botonWa(c.telefono, plantilla('wa_cobro', { nombre: wa.nombre, saldo: dinero(s), folios: 'pedido ' + folioTxt(p.folio) }), '💬 Recordar saldo') : '') +
+      '<button class="btn btn-peligro" data-accion="archivar" data-folio="' + p.folio + '">' + (si(p.archivado) ? '♻️ Desarchivar' : '🗄️ Archivar') + '</button>' +
+      '</div>';
+    return h;
+  };
+
+  VISTAS.nota = function (folio) {
+    var p = IDX.pedido[folio];
+    if (!p) return vacio('No encontré el pedido');
+    var c = cliente(p.cliente_id), s = saldo(p);
+    return '<div class="nota">' +
+      '<div class="nota-cab"><b>' + esc(S.config.negocio || 'McLov3') + '</b><span>Costura y composturas</span></div>' +
+      '<div class="nota-folio">' + folioTxt(p.folio) + '</div>' +
+      '<p><b>Cliente:</b> ' + esc(c.nombre) + '</p>' +
+      '<p><b>Trabajo:</b> ' + esc([p.tipo, p.descripcion].filter(Boolean).join(' · ')) + '</p>' +
+      '<p><b>Prendas:</b> ' + esc(p.prendas) + '</p>' +
+      '<p><b>Recibido:</b> ' + fechaCorta(p.fecha_recibido) + ' &nbsp; <b>Entrega:</b> ' + (fechaEnt(p) ? fechaCorta(fechaEnt(p)) : 'por confirmar') + '</p>' +
+      '<table class="cuenta" style="margin-top:10px">' +
+        '<tr class="total"><td>Total</td><td>' + dinero(p.total) + '</td></tr>' +
+        '<tr><td>Pagado</td><td>' + dinero(pagado(p.folio)) + '</td></tr>' +
+        '<tr class="saldo ' + (s > 0 ? 'debe' : 'ok') + '"><td>Saldo</td><td>' + dinero(Math.max(0, s)) + '</td></tr></table>' +
+      '<p class="nota-pie">¡Gracias por tu confianza! ♥<br>WhatsApp ' + esc(S.config.telefono_negocio || '') + '</p></div>' +
+      '<p class="ayuda" style="text-align:center">Toma una captura de pantalla para compartirla, o mándala como texto:</p>' +
+      '<div class="acciones" style="justify-content:center">' +
+        (c.telefono ? botonWa(c.telefono, plantilla('wa_nota', datosPedidoWa(p)), '📲 Enviar por WhatsApp') : '') + '</div>';
+  };
+
+  /* ---------- Formulario de pedido ---------- */
+  function vFormPedido(nuevo, arg) {
+    var p = nuevo
+      ? { folio: '', cliente_id: IDX.cliente[arg] ? arg : '', tipo: '', descripcion: '', prendas: 1, precio: '', descuento: 0, es_gratis: false, fecha_entrega: '', notas: '' }
+      : IDX.pedido[arg] && copia(IDX.pedido[arg]);
+    if (!p) return vacio('No encontré el pedido');
+    UI.form = { nuevo: nuevo, p: p, nuevoCliente: false, beneficio: null, aplicar: false, descuentoManual: !nuevo, metodo: 'Efectivo' };
+    return '<form id="form" autocomplete="off" novalidate>' +
+      '<fieldset class="caja"><legend>Cliente</legend><div id="f-cliente"></div></fieldset>' +
+      '<div id="f-beneficio"></div>' +
+      '<fieldset class="caja"><legend>Trabajo</legend>' +
+        '<div class="chips envolver">' + tipos().map(function (t) { return chip(t, p.tipo === t, 'tipo'); }).join('') + '</div>' +
+        campo('Descripción', '<textarea name="descripcion" rows="3" placeholder="Ej. Subir bastilla 3 cm y cambiar cierre">' + esc(p.descripcion) + '</textarea>') +
+        ('<div class="campo"><span>Número de prendas</span><span class="contador"><button type="button" class="btn btn-sec" data-accion="prendas" data-delta="-1">−</button>' +
+          '<input name="prendas" type="number" min="1" inputmode="numeric" value="' + esc(p.prendas || 1) + '">' +
+          '<button type="button" class="btn btn-sec" data-accion="prendas" data-delta="1">＋</button></span></div>') +
+      '</fieldset>' +
+      '<fieldset class="caja"><legend>Precio</legend><div class="fila-campos">' +
+        campo('Precio', '<input name="precio" type="number" inputmode="decimal" min="0" step="any" placeholder="$" value="' + esc(p.precio) + '">') +
+        campo('Descuento', '<input name="descuento" type="number" inputmode="decimal" min="0" step="any" value="' + esc(p.descuento || 0) + '">') +
+        '</div><p class="total-form">Total: <b id="f-total">$0</b></p>' +
+        (nuevo ? campo('Anticipo (opcional)', '<input name="anticipo" type="number" inputmode="decimal" min="0" step="any" placeholder="$0">') +
+          '<div class="chips">' + METODOS.map(function (m) { return chip(m, m === 'Efectivo', 'metodo'); }).join('') + '</div>' : '') +
+      '</fieldset>' +
+      '<fieldset class="caja"><legend>Entrega</legend>' +
+        campo('Fecha de entrega', '<input name="fecha_entrega" type="date" value="' + esc(fechaEnt(p)) + '">') +
+        '<div class="chips">' + [['Mañana', 1], ['En 3 días', 3], ['En 1 semana', 7], ['En 2 semanas', 14]].map(function (x) {
+          return '<button type="button" class="chip" data-accion="fechaRapida" data-dias="' + x[1] + '">' + x[0] + '</button>';
+        }).join('') + '</div>' +
+        campo('Notas', '<textarea name="notas" rows="2" placeholder="Ej. Trae la tela el sábado">' + esc(p.notas) + '</textarea>') +
+      '</fieldset>' +
+      '<button class="btn btn-grande" type="submit" id="f-guardar">' + (nuevo ? '💾 Guardar pedido' : '💾 Guardar cambios') + '</button>' +
+      '</form>';
+  }
+  VISTAS['nuevo-pedido'] = function (arg) { return vFormPedido(true, arg); };
+  VISTAS['editar-pedido'] = function (arg) { return vFormPedido(false, arg); };
+
+  function montarFormPedido() {
+    var form = $('form');
+    if (!form) return;
+    pintarClienteForm();
+    form.addEventListener('submit', function (e) { e.preventDefault(); guardarFormPedido(); });
+    form.elements.precio.addEventListener('input', recalcular);
+    form.elements.descuento.addEventListener('input', function () { UI.form.descuentoManual = true; recalcular(); });
+  }
+
+  function pintarClienteForm() {
+    var f = UI.form, cont = $('f-cliente');
+    var c = f.p.cliente_id && IDX.cliente[f.p.cliente_id];
+    if (c) {
+      cont.innerHTML = '<div class="cliente-elegido"><b>👤 ' + esc(c.nombre) + '</b>' + (c.telefono ? '<span>' + esc(c.telefono) + '</span>' : '') +
+        (f.nuevo ? '<button type="button" class="btn btn-sec" data-accion="cambiarCliente">Cambiar</button>' : '') + '</div>';
+    } else if (f.nuevoCliente) {
+      cont.innerHTML = campo('Nombre', '<input name="c_nombre" autocomplete="off">') +
+        campo('WhatsApp (10 dígitos)', '<input name="c_telefono" type="tel" inputmode="numeric" placeholder="961 123 4567">') +
+        '<button type="button" class="btn btn-sec" data-accion="buscarClienteExistente">← Buscar cliente existente</button>';
+    } else {
+      cont.innerHTML = '<input class="buscar" id="f-buscar-cliente" type="search" placeholder="🔍 Escribe nombre o teléfono…" data-entrada="buscarClienteForm">' +
+        '<div class="sugerencias" id="f-sugerencias"></div>' +
+        '<button type="button" class="btn btn-sec" data-accion="nuevoClienteForm">＋ Cliente nuevo</button>';
+    }
+    pintarBeneficio();
+  }
+
+  function pintarBeneficio() {
+    var f = UI.form, cont = $('f-beneficio');
+    f.beneficio = null;
+    if (f.nuevo && f.p.cliente_id) {
+      var se = sellosDe(f.p.cliente_id);
+      if (se.sellos >= se.meta) f.beneficio = 'gratis';
+      else if (!pedidosDe(f.p.cliente_id).length && porcentajePrimera()) f.beneficio = 'primera';
+    } else if (f.nuevo && f.nuevoCliente && porcentajePrimera()) {
+      f.beneficio = 'primera';
+    } else if (!f.nuevo && si(f.p.es_gratis)) {
+      f.beneficio = 'gratis';
+    }
+    if (!f.beneficio) { cont.innerHTML = ''; recalcular(); return; }
+    f.aplicar = f.nuevo || si(f.p.es_gratis);
+    var texto = f.beneficio === 'gratis'
+      ? '🎁 ¡Este es GRATIS! Completó ' + (num(S.config.sellos_para_regalo) || 9) + ' sellos en su tarjeta.'
+      : '✨ Primera vez: ' + porcentajePrimera() + '% de descuento en su primera compostura.';
+    cont.innerHTML = '<label class="beneficio"><input type="checkbox" id="f-aplicar"' + (f.aplicar ? ' checked' : '') + '><span>' + texto + '</span></label>';
+    $('f-aplicar').addEventListener('change', function () { f.aplicar = this.checked; f.descuentoManual = false; recalcular(); });
+    recalcular();
+  }
+
+  function recalcular() {
+    var f = UI.form, form = $('form');
+    if (!f || !form) return;
+    var precio = num(form.elements.precio.value), d = form.elements.descuento;
+    var gratis = f.beneficio === 'gratis' && f.aplicar;
+    d.disabled = gratis;
+    if (gratis) d.value = precio;
+    else if (f.beneficio && !f.descuentoManual) d.value = f.aplicar ? Math.round(precio * porcentajePrimera() / 100) : 0;
+    var total = gratis ? 0 : Math.max(0, precio - Math.min(precio, num(d.value)));
+    $('f-total').textContent = dinero(total);
+  }
+
+  function guardarFormPedido() {
+    var f = UI.form, el = $('form').elements, btn = $('f-guardar'), p = f.p;
+    p.descripcion = el.descripcion.value.trim();
+    p.prendas = Math.max(1, Math.round(num(el.prendas.value)) || 1);
+    p.precio = num(el.precio.value);
+    p.es_gratis = f.beneficio === 'gratis' && f.aplicar;
+    p.descuento = p.es_gratis ? p.precio : Math.min(p.precio, num(el.descuento.value));
+    p.fecha_entrega = el.fecha_entrega.value;
+    p.notas = el.notas.value.trim();
+
+    var nuevoCliente = null;
+    if (!p.cliente_id) {
+      if (!f.nuevoCliente) return aviso('Elige el cliente o crea uno nuevo', 'error');
+      nuevoCliente = { nombre: el.c_nombre.value.trim(), telefono: el.c_telefono.value };
+      if (nuevoCliente.nombre.length < 2) return aviso('Escribe el nombre del cliente', 'error');
+      var t = nuevoCliente.telefono.replace(/\D/g, '');
+      if (t && t.length !== 10) return aviso('El WhatsApp debe tener 10 dígitos', 'error');
+    }
+    if (!p.tipo && !p.descripcion) return aviso('Elige el tipo de trabajo o escribe una descripción', 'error');
+    var anticipo = f.nuevo ? { monto: num(el.anticipo.value), metodo: f.metodo } : null;
+    var total = p.es_gratis ? 0 : p.precio - p.descuento;
+    if (anticipo && anticipo.monto > total && !confirm('El anticipo (' + dinero(anticipo.monto) + ') es mayor que el total (' + dinero(total) + '). ¿Guardar así?')) return;
+
+    ocupado(btn, true);
+    var paso = nuevoCliente
+      ? servidor('guardarCliente', nuevoCliente).then(function (c) { upsert(S.clientes, c, 'id'); p.cliente_id = c.id; reindexar(); })
+      : Promise.resolve();
+    paso.then(function () {
+      return servidor('guardarPedido', {
+        folio: p.folio, cliente_id: p.cliente_id, tipo: p.tipo, descripcion: p.descripcion, prendas: p.prendas,
+        precio: p.precio, descuento: p.descuento, es_gratis: p.es_gratis, fecha_entrega: p.fecha_entrega, notas: p.notas
+      }, anticipo);
+    }).then(function (r) {
+      upsert(S.pedidos, r.pedido, 'folio');
+      if (r.pago) S.pagos.push(r.pago);
+      reindexar();
+      aviso('Pedido ' + folioTxt(r.pedido.folio) + ' guardado ✓', 'ok');
+      ir('pedido/' + r.pedido.folio, true);
+    }).catch(function (e) { ocupado(btn, false); errorServidor(e); });
+  }
+
+  /* ---------- Clientes ---------- */
+  var FILTROS_CLIENTES = [['activos', 'Todos'], ['saldo', 'Con saldo'], ['regalo', 'Con regalo'], ['archivados', 'Archivados']];
+
+  function filtrarClientes(f) {
+    return S.clientes.filter(function (c) {
+      if (f === 'archivados') return si(c.archivado);
+      if (si(c.archivado)) return false;
+      if (f === 'saldo') return saldoCliente(c.id) > 0;
+      if (f === 'regalo') { var se = sellosDe(c.id); return se.sellos >= se.meta; }
+      return true;
+    });
+  }
+
+  function listaClientesHtml() {
+    var q = normal(UI.qClientes);
+    var lista = filtrarClientes(UI.filtroClientes).filter(function (c) {
+      return !q || normal(c.nombre + ' ' + c.telefono + ' ' + c.email).indexOf(q) >= 0;
+    }).sort(function (a, b) { return String(a.nombre).localeCompare(String(b.nombre), 'es'); });
+    if (!lista.length) return vacio(q ? 'Nada coincide con "' + UI.qClientes + '"' : 'No hay clientes aquí');
+    var html = lista.slice(0, UI.limite).map(itemCliente).join('');
+    if (lista.length > UI.limite) html += '<button class="btn btn-sec btn-grande" data-accion="mas" data-lista="clientes">Ver más (' + (lista.length - UI.limite) + ')</button>';
+    return html;
+  }
+
+  function itemCliente(c) {
+    var n = pedidosDe(c.id).length, s = saldoCliente(c.id), se = sellosDe(c.id);
+    return '<button class="item' + (UI.ruta === 'cliente/' + c.id ? ' seleccionado' : '') + '" data-ir="cliente/' + esc(c.id) + '">' +
+      '<span class="item-fila"><b>' + esc(c.nombre) + '</b>' + (s > 0 ? '<span class="debe">Debe ' + dinero(s) + '</span>' : '') + '</span>' +
+      '<span class="item-sub">' + esc(c.telefono || 'Sin teléfono') + ' · ' + n + (n === 1 ? ' pedido' : ' pedidos') + ' · ' +
+      (se.sellos >= se.meta ? '🎁 regalo disponible' : '🎟️ ' + se.sellos + '/' + se.meta) + '</span></button>';
+  }
+
+  VISTAS.clientes = function () {
+    return '<div class="chips">' + FILTROS_CLIENTES.map(function (f) {
+        return '<button class="chip' + (UI.filtroClientes === f[0] ? ' activo' : '') + '" data-accion="filtrarClientes" data-filtro="' + f[0] + '">' +
+          f[1] + ' <small>' + filtrarClientes(f[0]).length + '</small></button>';
+      }).join('') + '</div>' +
+      '<input class="buscar" type="search" placeholder="🔍 Buscar nombre o teléfono…" data-entrada="buscarClientes" value="' + esc(UI.qClientes) + '">' +
+      '<div id="lista">' + listaClientesHtml() + '</div>' +
+      '<button class="fab" data-ir="nuevo-cliente" aria-label="Nuevo cliente">＋</button>';
+  };
+
+  function tarjetaFidelidad(id) {
+    var se = sellosDe(id), llenos = Math.min(se.sellos, se.meta), circulos = '';
+    for (var i = 1; i <= se.meta; i++) circulos += '<li class="' + (i <= llenos ? 'lleno' : '') + '">' + (i <= llenos ? '♥' : i) + '</li>';
+    circulos += '<li class="regalo' + (se.sellos >= se.meta ? ' listo' : '') + '">🎁</li>';
+    var texto = se.sellos >= se.meta ? '¡Su próximo arreglo es GRATIS! 🎉'
+      : se.sellos + ' de ' + se.meta + ' sellos · le faltan ' + (se.meta - se.sellos);
+    return '<div class="fid"><ol class="sellos">' + circulos + '</ol><p>' + texto + (se.gratis ? ' · ' + se.gratis + ' regalo(s) usados' : '') + '</p></div>';
+  }
+
+  function parseMedidas(t) {
+    return String(t || '').split(/\n|;/).map(function (l) {
+      var i = l.indexOf(':');
+      return i < 0 ? [l.trim(), ''] : [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+    }).filter(function (m) { return m[0] || m[1]; });
+  }
+  function textoMedidas(lista) {
+    return lista.filter(function (m) { return m[0] && m[1]; }).map(function (m) { return m[0] + ': ' + m[1]; }).join('\n');
+  }
+
+  VISTAS.cliente = function (id) {
+    var c = IDX.cliente[id];
+    if (!c) return vacio('No encontré al cliente');
+    var ps = (IDX.pedidosDe[id] || []).slice().sort(porFolioDesc), s = saldoCliente(id), medidas = parseMedidas(c.medidas);
+    var conSaldo = pedidosDe(id).filter(function (p) { return saldo(p) > 0; });
+    return '<div class="caja"><h2>' + esc(c.nombre) + (si(c.archivado) ? ' ' + badge('Archivado') : '') + '</h2>' +
+      '<dl class="datos">' + dato('WhatsApp', c.telefono) + dato('Correo', c.email) + dato('Notas', c.notas) +
+        dato('Cliente desde', c.creado ? fechaLarga(c.creado) : '') + '</dl>' +
+      '<div class="acciones">' + (c.telefono ? botonWa(c.telefono, '', '💬 WhatsApp') : '') +
+        '<button class="btn" data-ir="nuevo-pedido/' + esc(c.id) + '">＋ Nuevo pedido</button>' +
+        '<button class="btn btn-sec" data-ir="editar-cliente/' + esc(c.id) + '">✏️ Editar</button></div></div>' +
+      '<div class="caja"><h3>Tarjeta de fidelidad</h3>' + tarjetaFidelidad(id) + '</div>' +
+      (s > 0 ? '<div class="caja"><div class="item-fila"><h3>Saldo pendiente</h3><span class="debe grande">' + dinero(s) + '</span></div>' +
+        (c.telefono ? '<div class="acciones">' + botonWa(c.telefono, plantilla('wa_cobro', {
+          nombre: primerNombre(c.nombre), saldo: dinero(s),
+          folios: (conSaldo.length > 1 ? 'pedidos ' : 'pedido ') + conSaldo.map(function (p) { return folioTxt(p.folio); }).join(', ')
+        }), '💬 Recordar saldo') + '</div>' : '') + '</div>' : '') +
+      '<div class="caja"><h3>Medidas</h3>' + (medidas.length
+        ? '<dl class="datos">' + medidas.map(function (m) { return dato(m[0], m[1]); }).join('') + '</dl>'
+        : '<p class="ayuda">Sin medidas. Agrégalas con ✏️ Editar.</p>') + '</div>' +
+      seccion('Historial (' + ps.length + ')', ps.length ? ps.map(itemPedido).join('') : vacio('Todavía no tiene pedidos')) +
+      '<div class="acciones"><button class="btn btn-peligro" data-accion="archivarCliente" data-id="' + esc(c.id) + '">' +
+        (si(c.archivado) ? '♻️ Desarchivar cliente' : '🗄️ Archivar cliente') + '</button></div>';
+  };
+
+  function vFormCliente(id) {
+    var c = id ? IDX.cliente[id] && copia(IDX.cliente[id]) : { id: '', nombre: '', telefono: '', email: '', notas: '', medidas: '' };
+    if (!c) return vacio('No encontré al cliente');
+    var medidas = parseMedidas(c.medidas);
+    if (!medidas.length) medidas = [['Busto', ''], ['Cintura', ''], ['Cadera', '']];
+    UI.form = { c: c, medidas: medidas };
+    return '<form id="form" autocomplete="off" novalidate><fieldset class="caja"><legend>Datos</legend>' +
+      campo('Nombre', '<input name="nombre" value="' + esc(c.nombre) + '">') +
+      campo('WhatsApp (10 dígitos)', '<input name="telefono" type="tel" inputmode="numeric" placeholder="961 123 4567" value="' + esc(c.telefono) + '">') +
+      campo('Correo (opcional)', '<input name="email" type="email" value="' + esc(c.email) + '">') +
+      campo('Notas', '<textarea name="notas" rows="2" placeholder="Ej. Prefiere que le escriban en la tarde">' + esc(c.notas) + '</textarea>') +
+      '</fieldset><fieldset class="caja"><legend>Medidas (cm)</legend><div id="f-medidas"></div>' +
+      '<button type="button" class="btn btn-sec" data-accion="agregarMedida">＋ Agregar medida</button>' +
+      '<datalist id="lista-medidas">' + MEDIDAS_SUGERIDAS.map(function (m) { return '<option value="' + esc(m) + '">'; }).join('') + '</datalist>' +
+      '</fieldset><button class="btn btn-grande" type="submit" id="f-guardar">💾 Guardar</button></form>';
+  }
+  VISTAS['nuevo-cliente'] = function () { return vFormCliente(''); };
+  VISTAS['editar-cliente'] = function (id) { return vFormCliente(id); };
+
+  function pintarMedidas() {
+    $('f-medidas').innerHTML = UI.form.medidas.map(function (m, i) {
+      return '<div class="medida"><input list="lista-medidas" placeholder="Medida" value="' + esc(m[0]) + '" data-i="' + i + '" data-k="0">' +
+        '<input placeholder="cm" inputmode="decimal" value="' + esc(m[1]) + '" data-i="' + i + '" data-k="1">' +
+        '<button type="button" class="mini" data-accion="quitarMedida" data-i="' + i + '" aria-label="Quitar">✕</button></div>';
+    }).join('') || '<p class="ayuda">Sin medidas.</p>';
+  }
+
+  function montarFormCliente() {
+    var form = $('form');
+    if (!form) return;
+    pintarMedidas();
+    $('f-medidas').addEventListener('input', function (e) {
+      var i = e.target.getAttribute('data-i');
+      if (i !== null) UI.form.medidas[+i][+e.target.getAttribute('data-k')] = e.target.value;
+    });
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var el = form.elements, c = UI.form.c;
+      var datos = { id: c.id, nombre: el.nombre.value.trim(), telefono: el.telefono.value.replace(/\D/g, ''), email: el.email.value.trim(),
+        notas: el.notas.value.trim(), medidas: textoMedidas(UI.form.medidas) };
+      if (datos.telefono.length === 12 && datos.telefono.indexOf('52') === 0) datos.telefono = datos.telefono.slice(2);
+      if (datos.nombre.length < 2) return aviso('Escribe el nombre', 'error');
+      if (datos.telefono && datos.telefono.length !== 10) return aviso('El WhatsApp debe tener 10 dígitos', 'error');
+      var repetido = datos.telefono && S.clientes.filter(function (o) { return o.id !== c.id && String(o.telefono) === datos.telefono; })[0];
+      if (repetido && !confirm('Ya existe "' + repetido.nombre + '" con ese teléfono. ¿Guardar de todos modos?')) return;
+      var btn = $('f-guardar');
+      ocupado(btn, true);
+      servidor('guardarCliente', datos).then(function (r) {
+        upsert(S.clientes, r, 'id');
+        reindexar();
+        aviso('Cliente guardado ✓', 'ok');
+        ir('cliente/' + r.id, true);
+      }).catch(function (e) { ocupado(btn, false); errorServidor(e); });
+    });
+  }
+
+  /* ---------- Cobros ---------- */
+  VISTAS.cobros = function () {
+    var grupos = {};
+    S.pedidos.forEach(function (p) {
+      if (si(p.archivado)) return;
+      var s = saldo(p);
+      if (s <= 0) return;
+      var g = grupos[p.cliente_id] = grupos[p.cliente_id] || { c: cliente(p.cliente_id), total: 0, pedidos: [] };
+      g.total += s;
+      g.pedidos.push(p);
+    });
+    var lista = Object.keys(grupos).map(function (k) { return grupos[k]; }).sort(function (a, b) { return b.total - a.total; });
+    var total = lista.reduce(function (s, g) { return s + g.total; }, 0);
+    var h = '<div class="caja cobro-total"><span>Total por cobrar</span><b>' + dinero(total) + '</b><small>' +
+      lista.length + (lista.length === 1 ? ' cliente' : ' clientes') + '</small></div>';
+    if (!lista.length) return h + vacio('¡Nadie te debe! 🎉');
+    return h + lista.map(function (g) {
+      var folios = g.pedidos.map(function (p) { return folioTxt(p.folio); }).join(', ');
+      return '<div class="caja"><div class="item-fila"><b>' + esc(g.c.nombre) + '</b><span class="debe grande">' + dinero(g.total) + '</span></div>' +
+        '<ul class="cobro-pedidos">' + g.pedidos.map(function (p) {
+          return '<li><button class="enlace" data-ir="pedido/' + p.folio + '">' + folioTxt(p.folio) + ' · ' + esc(p.tipo || p.descripcion || 'Pedido') +
+            ' · ' + esc(p.estado) + '</button><b>' + dinero(saldo(p)) + '</b></li>';
+        }).join('') + '</ul><div class="acciones">' +
+        (g.c.telefono ? botonWa(g.c.telefono, plantilla('wa_cobro', {
+          nombre: primerNombre(g.c.nombre), saldo: dinero(g.total), folios: (g.pedidos.length > 1 ? 'pedidos ' : 'pedido ') + folios
+        }), '💬 Recordar por WhatsApp') : '<span class="ayuda">Sin teléfono registrado</span>') +
+        '<button class="btn btn-sec" data-ir="cliente/' + esc(g.c.id) + '">Ver cliente</button></div></div>';
+    }).join('');
+  };
+
+  /* ---------- Solicitudes ---------- */
+  var FILTROS_SOL = [['Nueva', 'Nuevas'], ['Contactada', 'Contactadas'], ['Convertida', 'Convertidas'], ['Descartada', 'Descartadas'], ['todas', 'Todas']];
+
+  VISTAS.solicitudes = function () {
+    var lista = S.solicitudes.filter(function (s) { return UI.filtroSol === 'todas' || s.estado === UI.filtroSol; })
+      .sort(function (a, b) { return String(b.fecha).localeCompare(String(a.fecha)); });
+    return '<div class="chips">' + FILTROS_SOL.map(function (f) {
+        var n = S.solicitudes.filter(function (s) { return f[0] === 'todas' || s.estado === f[0]; }).length;
+        return '<button class="chip' + (UI.filtroSol === f[0] ? ' activo' : '') + '" data-accion="filtrarSol" data-filtro="' + f[0] + '">' +
+          f[1] + ' <small>' + n + '</small></button>';
+      }).join('') + '</div>' +
+      (lista.length ? lista.map(function (s) {
+        return '<div class="caja"><div class="item-fila"><b>' + esc(s.nombre) + '</b>' + badge(s.estado) + '</div>' +
+          '<span class="item-sub">' + fechaCorta(s.fecha) + ' · ' + esc(s.servicio) + ' · ' + esc(s.telefono) + '</span>' +
+          (s.fecha_deseada ? '<span class="item-sub">📅 Lo necesita para el ' + fechaLarga(s.fecha_deseada) + '</span>' : '') +
+          (s.mensaje ? '<p class="mensaje">' + esc(s.mensaje) + '</p>' : '') +
+          '<div class="acciones">' +
+            botonWa(s.telefono, plantilla('wa_solicitud', { nombre: primerNombre(s.nombre), servicio: s.servicio }), '📲 Responder',
+              'data-accion="contactada" data-id="' + esc(s.id) + '"') +
+            (s.cliente_id ? '<button class="btn btn-sec" data-ir="cliente/' + esc(s.cliente_id) + '">Ver cliente</button>'
+              : '<button class="btn btn-sec" data-accion="convertir" data-id="' + esc(s.id) + '">＋ Crear cliente</button>') +
+            (s.estado === 'Descartada'
+              ? '<button class="btn btn-sec" data-accion="estadoSol" data-id="' + esc(s.id) + '" data-estado="Nueva">↩️ Reabrir</button>'
+              : s.estado !== 'Convertida' ? '<button class="btn btn-peligro" data-accion="estadoSol" data-id="' + esc(s.id) + '" data-estado="Descartada">Descartar</button>' : '') +
+          '</div></div>';
+      }).join('') : vacio(UI.filtroSol === 'Nueva' ? 'No hay solicitudes nuevas 💤' : 'No hay solicitudes aquí'));
+  };
+
+  var MONTAR = {
+    'nuevo-pedido': montarFormPedido, 'editar-pedido': montarFormPedido,
+    'nuevo-cliente': montarFormCliente, 'editar-cliente': montarFormCliente
+  };
+
+  /* ======================= Acciones (botones) ======================= */
+  function volverAPintar() { mostrar(UI.ruta, true); }
+  function solicitud(id) { return S.solicitudes.filter(function (s) { return s.id === id; })[0]; }
+
+  var ACCIONES = {
+    atras: function () { if (UI.form && !confirm("¿Salir sin guardar?")) return; ir(padreDe(UI.ruta)); },
+    recargar: function () { if (UI.form && !confirm('Se perderá lo que no hayas guardado. ¿Actualizar?')) return; UI.form = null; cargar(true); },
+
+    filtrar: function (el) {
+      UI.filtroPedidos = el.getAttribute('data-filtro'); UI.qPedidos = ''; UI.limite = 50;
+      if (UI.ruta.indexOf('pedido') === 0) volverAPintar(); else ir('pedidos');
+    },
+    filtrarClientes: function (el) { UI.filtroClientes = el.getAttribute('data-filtro'); UI.limite = 50; volverAPintar(); },
+    filtrarSol: function (el) { UI.filtroSol = el.getAttribute('data-filtro'); volverAPintar(); },
+    mas: function (el) {
+      UI.limite += 50;
+      $('lista').innerHTML = el.getAttribute('data-lista') === 'clientes' ? listaClientesHtml() : listaPedidosHtml();
+    },
+
+    elegir: function (el) {
+      var grupo = el.getAttribute('data-grupo'), valor = el.getAttribute('data-valor');
+      [].forEach.call(el.parentNode.children, function (b) { b.classList.remove('activo'); });
+      if (grupo === 'tipo' && UI.form && UI.form.p.tipo === valor) { UI.form.p.tipo = ''; return; } // tocar de nuevo lo quita
+      el.classList.add('activo');
+      if (grupo === 'tipo') UI.form.p.tipo = valor;
+      else if (grupo === 'metodo') UI.form.metodo = valor;
+      else if (grupo === 'metodoAbono') UI.metodoAbono = valor;
+    },
+
+    /* Pedido */
+    estado: function (el) {
+      var p = IDX.pedido[el.getAttribute('data-folio')], nuevo = el.getAttribute('data-estado'), anterior = p.estado;
+      if (nuevo === anterior) return;
+      p.estado = nuevo;
+      volverAPintar();
+      servidor('cambiarEstado', p.folio, nuevo).then(function (r) {
+        Object.assign(p, r);
+        if (nuevo === 'Entregado' && saldo(p) > 0) aviso('Ojo: todavía debe ' + dinero(saldo(p)), 'error');
+        else aviso('Pedido ' + folioTxt(p.folio) + ': ' + nuevo + ' ✓', 'ok');
+      }).catch(function (e) { p.estado = anterior; volverAPintar(); errorServidor(e); });
+    },
+    liquidar: function (el) { $('abono-monto').value = el.getAttribute('data-monto'); },
+    abonar: function (el) {
+      var monto = num($('abono-monto').value), folio = el.getAttribute('data-folio');
+      if (!(monto > 0)) return aviso('Escribe el monto del abono', 'error');
+      ocupado(el, true);
+      servidor('registrarPago', { folio: folio, monto: monto, metodo: UI.metodoAbono, nota: '' }).then(function (g) {
+        S.pagos.push(g);
+        reindexar();
+        volverAPintar();
+        var p = IDX.pedido[folio];
+        aviso(saldo(p) > 0 ? 'Abono registrado ✓ · Resta ' + dinero(saldo(p)) : '¡Pedido liquidado! ✓', 'ok');
+      }).catch(function (e) { ocupado(el, false); errorServidor(e); });
+    },
+    anularPago: function (el) {
+      var id = el.getAttribute('data-id'), g = S.pagos.filter(function (x) { return x.id === id; })[0];
+      if (!g || !confirm('¿Anular el pago de ' + dinero(g.monto) + ' del ' + fechaCorta(g.fecha) + '?')) return;
+      servidor('anularPago', id).then(function () {
+        S.pagos = S.pagos.filter(function (x) { return x.id !== id; });
+        reindexar();
+        volverAPintar();
+        aviso('Pago anulado', 'ok');
+      }).catch(errorServidor);
+    },
+    archivar: function (el) {
+      var p = IDX.pedido[el.getAttribute('data-folio')], archivar = !si(p.archivado);
+      if (archivar && !confirm('¿Archivar el pedido ' + folioTxt(p.folio) + '? Ya no aparecerá en las listas (se puede recuperar en "Archivados").')) return;
+      servidor('archivarPedido', p.folio, archivar).then(function (r) {
+        Object.assign(p, r);
+        reindexar();
+        aviso(archivar ? 'Pedido archivado' : 'Pedido recuperado', 'ok');
+        ir(archivar ? 'pedidos' : 'pedido/' + p.folio, true);
+      }).catch(errorServidor);
+    },
+
+    /* Formulario de pedido */
+    prendas: function (el) {
+      var i = $('form').elements.prendas;
+      i.value = Math.max(1, (Math.round(num(i.value)) || 1) + Number(el.getAttribute('data-delta')));
+    },
+    fechaRapida: function (el) { $('form').elements.fecha_entrega.value = sumarDias(S.hoy, Number(el.getAttribute('data-dias'))); },
+    elegirCliente: function (el) { UI.form.p.cliente_id = el.getAttribute('data-id'); pintarClienteForm(); },
+    cambiarCliente: function () { UI.form.p.cliente_id = ''; pintarClienteForm(); var b = $('f-buscar-cliente'); if (b) b.focus(); },
+    nuevoClienteForm: function () {
+      var q = $('f-buscar-cliente') ? $('f-buscar-cliente').value.trim() : '';
+      UI.form.nuevoCliente = true;
+      pintarClienteForm();
+      var el = $('form').elements;
+      if (/^\d[\d\s]+$/.test(q)) el.c_telefono.value = q; else el.c_nombre.value = q;
+      el.c_nombre.focus();
+    },
+    buscarClienteExistente: function () { UI.form.nuevoCliente = false; pintarClienteForm(); },
+
+    /* Clientes */
+    agregarMedida: function () { UI.form.medidas.push(['', '']); pintarMedidas(); },
+    quitarMedida: function (el) { UI.form.medidas.splice(+el.getAttribute('data-i'), 1); pintarMedidas(); },
+    archivarCliente: function (el) {
+      var c = IDX.cliente[el.getAttribute('data-id')], archivar = !si(c.archivado);
+      if (archivar && !confirm('¿Archivar a ' + c.nombre + '? No se borra nada; se puede recuperar en "Archivados".')) return;
+      servidor('guardarCliente', { id: c.id, archivado: archivar }).then(function (r) {
+        Object.assign(c, r);
+        reindexar();
+        aviso(archivar ? 'Cliente archivado' : 'Cliente recuperado', 'ok');
+        ir(archivar ? 'clientes' : 'cliente/' + c.id, true);
+      }).catch(errorServidor);
+    },
+
+    /* Solicitudes */
+    contactada: function (el) {
+      var s = solicitud(el.getAttribute('data-id'));
+      if (!s || s.estado !== 'Nueva') return;
+      s.estado = 'Contactada';
+      reindexar();
+      setTimeout(volverAPintar, 400); // deja que se abra WhatsApp primero
+      servidor('guardarSolicitud', { id: s.id, estado: 'Contactada' }).catch(function (e) { s.estado = 'Nueva'; reindexar(); errorServidor(e); });
+    },
+    estadoSol: function (el) {
+      var s = solicitud(el.getAttribute('data-id')), nuevo = el.getAttribute('data-estado'), anterior = s.estado;
+      s.estado = nuevo;
+      reindexar();
+      volverAPintar();
+      servidor('guardarSolicitud', { id: s.id, estado: nuevo }).catch(function (e) { s.estado = anterior; reindexar(); volverAPintar(); errorServidor(e); });
+    },
+    convertir: function (el) {
+      ocupado(el, true);
+      servidor('convertirSolicitud', el.getAttribute('data-id')).then(function (r) {
+        upsert(S.clientes, r.cliente, 'id');
+        upsert(S.solicitudes, r.solicitud, 'id');
+        reindexar();
+        aviso(r.nueva ? 'Cliente creado ✓' : 'Ya existía un cliente con ese teléfono; quedó ligado ✓', 'ok');
+        ir('cliente/' + r.cliente.id);
+      }).catch(function (e) { ocupado(el, false); errorServidor(e); });
+    }
+  };
+
+  /* Búsquedas mientras escribe */
+  var ENTRADAS = {
+    buscarPedidos: function (el) { UI.qPedidos = el.value; UI.limite = 50; $('lista').innerHTML = listaPedidosHtml(); },
+    buscarClientes: function (el) { UI.qClientes = el.value; UI.limite = 50; $('lista').innerHTML = listaClientesHtml(); },
+    buscarClienteForm: function (el) {
+      var q = normal(el.value.trim()), cont = $('f-sugerencias');
+      if (!q) { cont.innerHTML = ''; return; }
+      var r = S.clientes.filter(function (c) { return !si(c.archivado) && normal(c.nombre + ' ' + c.telefono).indexOf(q) >= 0; }).slice(0, 6);
+      cont.innerHTML = r.length ? r.map(function (c) {
+        return '<button type="button" class="item" data-accion="elegirCliente" data-id="' + esc(c.id) + '"><b>' + esc(c.nombre) + '</b>' +
+          '<span class="item-sub">' + esc(c.telefono || 'Sin teléfono') + '</span></button>';
+      }).join('') : '<p class="ayuda">No existe. Usa "＋ Cliente nuevo".</p>';
+    }
+  };
+
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-ir],[data-accion]');
+    if (!el || el.disabled) return;
+    if (el.hasAttribute('data-ir')) {
+      e.preventDefault();
+      if (UI.form && !confirm('¿Salir sin guardar?')) return;
+      ir(el.getAttribute('data-ir'));
+      return;
+    }
+    var fn = ACCIONES[el.getAttribute('data-accion')];
+    if (fn) fn(el, e);
+  });
+  document.addEventListener('input', function (e) {
+    var fn = ENTRADAS[e.target.getAttribute('data-entrada')];
+    if (fn) fn(e.target);
+  });
+
+  /* Actualiza sola al volver a la app (por si se capturó algo desde el celular) */
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && UI.cargado && !UI.form && Date.now() - UI.ultimaCarga > 5 * 60 * 1000) cargar(true);
+  });
+  var tGiro;
+  window.addEventListener('resize', function () {
+    clearTimeout(tGiro);
+    tGiro = setTimeout(function () { if (UI.cargado && !UI.form) volverAPintar(); }, 250);
+  });
+
+  /* ======================= Inicio ======================= */
+  try {
+    google.script.history.setChangeHandler(function (e) {
+      if (UI.form && !confirm('¿Salir sin guardar?')) return;
+      mostrar((e.state && e.state.ruta) || (e.location && e.location.hash) || 'inicio');
+    });
+    google.script.url.getLocation(function (loc) { UI.ruta = loc.hash || 'inicio'; cargar(); });
+  } catch (e) {
+    cargar();
+  }
+})();
+</script>
