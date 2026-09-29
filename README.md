@@ -3,6 +3,8 @@
 La página (landing) y el control de clientes y pedidos de **McLov3 Costura y Composturas**, de Mafer (Col. Penipak, Tuxtla Gutiérrez).
 Todo funciona gratis: la página en GitHub Pages y el CRM en Google Sheets + Apps Script.
 
+📝 **¿Qué hay que cambiar y dónde?** → [GUIA-DE-CAMBIOS.md](GUIA-DE-CAMBIOS.md)
+
 ```
 landing/       Página pública (HTML/CSS/JS, sin frameworks) → GitHub Pages
 formulario/    Apps Script aparte que recibe las cotizaciones de la página (solo puede AGREGAR filas)
