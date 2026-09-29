@@ -32,7 +32,7 @@ Abre http://localhost:8081/dev/preview.html. Es la app del CRM con datos de ejem
 1. Crea un repositorio en GitHub (puede llamarse `mclov3`) y sube esta carpeta.
 2. En el repo ve a **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 3. Cada vez que cambie algo dentro de `landing/`, el flujo `.github/workflows/pages.yml` publica la página solo, en 1–2 minutos. No hay límite mensual de publicaciones.
-4. La dirección queda como `https://TU-USUARIO.github.io/mclov3/`. En `landing/index.html` busca `TU-SITIO` y reemplázalo por esa dirección. Sin esto, WhatsApp y Facebook no muestran la imagen al compartir el enlace.
+4. La dirección es `https://demonicokaz.github.io/mclov3/` y ya está puesta en `landing/index.html` (`og:image`, `og:url` y el bloque `ld+json`), que es lo que usan WhatsApp y Facebook para mostrar la imagen. Si algún día cambia (por ejemplo, con dominio propio), actualízala ahí.
 5. (Opcional) Un dominio propio como `mclov3.com.mx` se conecta en **Settings → Pages → Custom domain**.
 
 > Con el plan gratis, GitHub Pages necesita un repositorio **público**. No pasa nada: el repo no guarda datos de clientes, esos viven en el Google Sheet.
